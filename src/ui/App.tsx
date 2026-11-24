@@ -1,66 +1,162 @@
-import { useEffect, useState } from 'react';
-import { api } from './api';
-import type { RepoInfo, RepoStatus } from '../core/types';
+import { useEffect } from 'react';
+import { GitBranch, RotateCw } from 'lucide-react';
+import { Header } from './Header';
+import {
+  SECTIONS,
+  StoreProvider,
+  useStore,
+  type Section,
+} from './store';
+import { ConfirmDialog } from './components/ConfirmDialog';
+import { Spinner } from './components/Spinner';
+import { Toasts } from './components/Toasts';
+import { ChangesSection } from './sections/Changes';
+import { BranchesSection } from './sections/Branches';
+import { HistorySection } from './sections/History';
+import { StashSection } from './sections/Stash';
+import { WorktreesSection } from './sections/Worktrees';
+import { fireEscape } from './hooks/useEscape';
+import { isEditableTarget, modLabel } from './utils';
 
-export default function App() {
-  const [repos, setRepos] = useState<RepoInfo[]>([]);
-  const [active, setActive] = useState<string | null>(null);
-  const [status, setStatus] = useState<RepoStatus | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+function sectionCount(section: Section, state: ReturnType<typeof useStore>['state']): number {
+  switch (section) {
+    case 'changes':
+      return state.status
+        ? state.status.staged.length +
+            state.status.unstaged.length +
+            state.status.untracked.length +
+            state.status.conflicted.length
+        : 0;
+    case 'branches':
+      return state.branches.length;
+    case 'history':
+      return 0;
+    case 'stash':
+      return state.stashes.length;
+    case 'worktrees':
+      return state.worktrees.length;
+    default:
+      return 0;
+  }
+}
+
+function SectionView({ section }: { section: Section }) {
+  switch (section) {
+    case 'changes':
+      return <ChangesSection />;
+    case 'branches':
+      return <BranchesSection />;
+    case 'history':
+      return <HistorySection />;
+    case 'stash':
+      return <StashSection />;
+    case 'worktrees':
+      return <WorktreesSection />;
+    default:
+      return null;
+  }
+}
+
+function BootScreen() {
+  const { state, retryBoot } = useStore();
+  return (
+    <div className="boot">
+      <div className="boot-card">
+        <div className="boot-logo" aria-hidden="true">
+          <GitBranch size={20} />
+        </div>
+        <div className="boot-title">Git Controls</div>
+        {state.bootError ? (
+          <>
+            <div className="boot-error-title">Cannot reach the sidecar</div>
+            <pre className="boot-detail">{state.bootError}</pre>
+            <button type="button" className="btn btn-primary btn-sm" onClick={retryBoot}>
+              <RotateCw size={12} /> Retry
+            </button>
+          </>
+        ) : (
+          <div className="boot-loading">
+            <Spinner size={14} />
+            <span>Connecting to the repository…</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Shell() {
+  const { state, selectSection } = useStore();
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const uris = (await window.sidecar?.getWorkspaceUris()) ?? [];
-        const ctx = await api.pushContext(uris);
-        setRepos(ctx.repos);
-        if (ctx.repos[0]) setActive(ctx.repos[0].path);
-      } catch (e) {
-        setErr(String(e));
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        if (fireEscape()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && !event.altKey && !event.shiftKey && /^[1-5]$/.test(event.key)) {
+        const target = SECTIONS[Number(event.key) - 1];
+        if (target) {
+          event.preventDefault();
+          selectSection(target.id);
+        }
+        return;
+      }
+      if (event.key === '/' && !mod && !event.altKey && !isEditableTarget(event.target)) {
+        const search = document.querySelector<HTMLInputElement>('[data-agc-search]');
+        if (search) {
+          event.preventDefault();
+          search.focus();
+          search.select();
+        }
       }
     };
-    void load();
-    return window.sidecar?.onWorkspaceChange((uris) => {
-      void api.pushContext(uris).then((ctx) => {
-        setRepos(ctx.repos);
-        setActive(ctx.repos[0]?.path ?? null);
-      });
-    });
-  }, []);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectSection]);
 
-  useEffect(() => {
-    if (!active) return;
-    void api.status(active).then(setStatus).catch((e) => setErr(String(e)));
-  }, [active]);
+  if (!state.ready) return <BootScreen />;
 
   return (
-    <div style={{ padding: 12, fontSize: 13 }}>
-      <h3 style={{ margin: '0 0 8px' }}>Git Controls</h3>
-      {err && <div style={{ color: '#e5534b' }}>{err}</div>}
-      {repos.length === 0 && <div>No git repos in workspace.</div>}
-      {repos.map((r) => (
-        <button key={r.path} onClick={() => setActive(r.path)} style={{ marginRight: 6 }}>
-          {r.name}
-          {r.isWorktree ? ' (wt)' : ''}
-        </button>
-      ))}
-      {status && (
-        <div style={{ marginTop: 12 }}>
-          <div>
-            <b>{status.branch ?? `detached ${status.detachedAt}`}</b>
-            {status.upstream && <span> → {status.upstream}</span>}
-            <span>
-              {' '}
-              ↑{status.ahead} ↓{status.behind}
-            </span>
-          </div>
-          <div>
-            staged {status.staged.length} · unstaged {status.unstaged.length} · untracked{' '}
-            {status.untracked.length}
-            {status.operation && <span> · {status.operation} in progress</span>}
-          </div>
-        </div>
-      )}
+    <div className="app">
+      <Header />
+      <nav className="tabs" role="tablist" aria-label="Git sections">
+        {SECTIONS.map((section, index) => {
+          const count = sectionCount(section.id, state);
+          const active = state.section === section.id;
+          return (
+            <button
+              key={section.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              className={`tab ${active ? 'active' : ''}`}
+              title={`${section.label} (${modLabel()}${index + 1})`}
+              onClick={() => selectSection(section.id)}
+            >
+              <span className="tab-label">{section.label}</span>
+              {count > 0 ? <span className="tab-badge">{count > 99 ? '99+' : count}</span> : null}
+            </button>
+          );
+        })}
+      </nav>
+      <main className="app-main" role="tabpanel">
+        <SectionView section={state.section} />
+      </main>
+      <ConfirmDialog />
+      <Toasts />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <StoreProvider>
+      <Shell />
+    </StoreProvider>
   );
 }
