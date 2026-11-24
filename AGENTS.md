@@ -59,6 +59,8 @@ pnpm typecheck
 pnpm test             # vitest (temp repos only — never a real user repo)
 pnpm install-plugin   # sync dist-plugin -> ~/.gemini/config/plugins/agy-git-controls
 agy plugin validate ./dist-plugin --strict
+node scripts/release.mjs --push   # build + publish payload to the `release` branch
+                                  # (user install: agy plugin install …/tree/release)
 ```
 
 ## Testing rules

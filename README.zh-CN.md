@@ -45,11 +45,18 @@ Sidecar 后端（Node，官方 sidecar_sdk）
 
 ## 安装
 
+一条命令——无需克隆或构建（安装预构建的 `release` 分支）：
+
 ```bash
-git clone <repo> && cd agy-git-controls
+agy plugin install https://github.com/isleei/agy-git-controls/tree/release
+```
+
+或从源码安装：
+
+```bash
+git clone https://github.com/isleei/agy-git-controls.git && cd agy-git-controls
 pnpm install && pnpm build
 pnpm install-plugin        # 同步 dist-plugin -> ~/.gemini/config/plugins/agy-git-controls
-# 或：agy plugin install ./dist-plugin
 ```
 
 重启 Antigravity，在侧栏 **+** → **Plugins** → **Git Controls** 打开面板。

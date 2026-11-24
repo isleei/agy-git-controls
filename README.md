@@ -45,11 +45,18 @@ A bundled MCP server (`mcp_config.json`) also exposes a curated set of Git tools
 
 ## Install
 
+One command — no clone or build needed (installs the prebuilt `release` branch):
+
 ```bash
-git clone <repo> && cd agy-git-controls
+agy plugin install https://github.com/isleei/agy-git-controls/tree/release
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/isleei/agy-git-controls.git && cd agy-git-controls
 pnpm install && pnpm build
 pnpm install-plugin        # syncs dist-plugin -> ~/.gemini/config/plugins/agy-git-controls
-# or: agy plugin install ./dist-plugin
 ```
 
 Restart Antigravity, then open the panel: side panel **+** → **Plugins** → **Git Controls**.
