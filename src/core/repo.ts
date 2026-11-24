@@ -59,7 +59,16 @@ function splitStatusFields(line: string, count: number): { fields: string[]; res
   return { fields, rest: line.slice(pos) };
 }
 
-/** Parse `git status --porcelain=v2 --branch` output. */
+/**
+ * Parse `git status --porcelain=v2 --branch -z` output.
+ *
+ * With `-z` every record is NUL-terminated (headers included) and paths are
+ * emitted verbatim — no C-style quoting, no `core.quotePath` escaping — so
+ * names with `"`, `\`, tab, newline or non-ASCII survive unchanged. Rename
+ * records carry `<path>\0<origPath>\0` instead of `<path>\t<origPath>`.
+ * Newline-separated output (the legacy form) is still accepted for callers
+ * that build fixtures by hand.
+ */
 export function parsePorcelainV2(out: string, repo: string): RepoStatus {
   const status: RepoStatus = {
     repo,
@@ -79,7 +88,11 @@ export function parsePorcelainV2(out: string, repo: string): RepoStatus {
   let detached = false;
   let headOid: string | null = null;
 
-  for (const line of out.split('\n')) {
+  const nulSeparated = out.includes('\0');
+  const records = nulSeparated ? out.split('\0') : out.split('\n');
+
+  for (let i = 0; i < records.length; i++) {
+    const line = records[i]!;
     if (!line) continue;
     if (line.startsWith('# branch.head ')) {
       const v = line.slice('# branch.head '.length).trim();
@@ -97,11 +110,22 @@ export function parsePorcelainV2(out: string, repo: string): RepoStatus {
       }
     } else if (line[0] === '1' || line[0] === '2') {
       // ordinary: `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`
-      // rename/copy: `2 <XY> ... <X><score> <path>\t<origPath>`
+      // rename/copy: `2 <XY> ... <X><score> <path>\0<origPath>`
       const isRename = line[0] === '2';
-      const tab = isRename ? line.indexOf('\t') : -1;
-      const head = tab === -1 ? line : line.slice(0, tab);
-      const origPath = tab === -1 ? undefined : line.slice(tab + 1);
+      let head = line;
+      let origPath: string | undefined;
+      if (isRename) {
+        if (nulSeparated) {
+          origPath = records[i + 1];
+          i += 1;
+        } else {
+          const tab = line.indexOf('\t');
+          if (tab !== -1) {
+            head = line.slice(0, tab);
+            origPath = line.slice(tab + 1);
+          }
+        }
+      }
       const { fields, rest } = splitStatusFields(head, isRename ? 9 : 8);
       if (!rest) continue;
       const xy = fields[1] ?? '..';
@@ -185,10 +209,15 @@ export async function detectOperation(root: string): Promise<string | null> {
 }
 
 export async function getStatus(repo: string): Promise<RepoStatus> {
-  const res = await git(['status', '--porcelain=v2', '--branch', '--untracked-files=normal'], {
-    cwd: repo,
-    timeoutMs: 20_000,
-  });
+  const res = await git(
+    ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'],
+    {
+      cwd: repo,
+      timeoutMs: 20_000,
+      // Porcelain v2 is ~100 B per entry; 64 MiB keeps large monorepos whole.
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
   const status = parsePorcelainV2(res.stdout, repo);
   status.operation = await detectOperation(repo);
   return status;

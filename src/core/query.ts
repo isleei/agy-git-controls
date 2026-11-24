@@ -3,7 +3,7 @@
  * None of these take the repo write lock.
  */
 import { GitError, git } from './git.js';
-import { assertSafeRef, sanitizePathspec } from './refs.js';
+import { assertSafeRef, redactUrl, sanitizePathspec } from './refs.js';
 import type {
   BranchInfo,
   CommitInfo,
@@ -51,7 +51,7 @@ export async function listBranches(repo: string): Promise<BranchInfo[]> {
     const [ref = '', name = '', head = '', upstream = '', track = '', date = '', sha = '', symref = ''] =
       line.split('\x00');
     // refs/remotes/<remote>/HEAD is a symbolic alias, not a branch.
-    if (symref) continue;
+    if (symref || name.includes(' -> ')) continue;
     branches.push({
       name,
       ref,
@@ -177,8 +177,8 @@ export async function listRemotes(repo: string): Promise<RemoteInfo[]> {
         allowFail: true,
         timeoutMs: 10_000,
       });
-      const fetchUrl = fetchRes.code === 0 ? fetchRes.stdout.trim() : '';
-      const pushUrl = pushRes.code === 0 ? pushRes.stdout.trim() : fetchUrl;
+      const fetchUrl = fetchRes.code === 0 ? redactUrl(fetchRes.stdout.trim()) : '';
+      const pushUrl = pushRes.code === 0 ? redactUrl(pushRes.stdout.trim()) : fetchUrl;
       return { name, fetchUrl, pushUrl };
     }),
   );
@@ -224,17 +224,22 @@ export async function listTags(repo: string): Promise<TagInfo[]> {
 /* stashes                                                             */
 /* ------------------------------------------------------------------ */
 
-export async function listStashes(repo: string): Promise<StashEntry[]> {
-  const res = await git(['stash', 'list', '--format=%gs%x09%ct'], {
-    cwd: repo,
-    timeoutMs: 20_000,
-  });
+/**
+ * Parse `git stash list --format=%gs%x00%ct` (one record per line).
+ * NUL-separated so a subject containing a tab cannot shift the date, and a
+ * subject containing the separator itself is still impossible for git to
+ * write (reflog messages are whitespace-sanitised).
+ * Exported for tests, which need a tab-bearing subject git cannot create.
+ */
+export function parseStashList(out: string): StashEntry[] {
   const entries: StashEntry[] = [];
-  res.stdout
+  out
     .split('\n')
     .filter(Boolean)
     .forEach((line, index) => {
-      const [subject = '', epoch = ''] = line.split('\t');
+      const nul = line.indexOf('\x00');
+      const subject = nul === -1 ? line : line.slice(0, nul);
+      const epoch = nul === -1 ? '' : line.slice(nul + 1);
       const m = /^(?:WIP on|On) ([^:]+):\s?(.*)$/.exec(subject);
       const seconds = Number(epoch);
       const entry: StashEntry = {
@@ -249,6 +254,14 @@ export async function listStashes(repo: string): Promise<StashEntry[]> {
   return entries;
 }
 
+export async function listStashes(repo: string): Promise<StashEntry[]> {
+  const res = await git(['stash', 'list', '--format=%gs%x00%ct'], {
+    cwd: repo,
+    timeoutMs: 20_000,
+  });
+  return parseStashList(res.stdout);
+}
+
 /* ------------------------------------------------------------------ */
 /* log                                                                 */
 /* ------------------------------------------------------------------ */
@@ -261,6 +274,10 @@ export interface LogOptions {
   all?: boolean;
   /** Restrict history to a repository-relative path. */
   path?: string;
+  /** Start from this revision instead of HEAD (implies that revision only). */
+  ref?: string;
+  /** Case-sensitive regex matched against commit messages (`--grep`). */
+  query?: string;
 }
 
 const LOG_FORMAT =
@@ -293,6 +310,11 @@ export function parseCommitRefs(decoration: string): CommitRef[] {
       const target = part.slice('HEAD -> '.length).trim();
       refs.push({ name: 'HEAD', type: 'head' });
       refs.push({ name: shortRefName(target, 'branch'), type: 'branch' });
+      continue;
+    }
+    if (part.includes(' -> ')) {
+      // e.g. `refs/remotes/origin/HEAD -> refs/remotes/origin/main`: a symref
+      // alias, never a branch called `origin/HEAD -> ...`.
       continue;
     }
     if (part.startsWith('tag: ')) {
@@ -341,7 +363,17 @@ export async function getLog(repo: string, opts: LogOptions = {}): Promise<LogPa
     `--skip=${skip}`,
     `--format=${LOG_FORMAT}`,
   ];
-  if (opts.all !== false) args.push('--all');
+  if (opts.all !== false && opts.ref === undefined) args.push('--all');
+  if (opts.query !== undefined) {
+    if (opts.query.length === 0 || opts.query.includes('\0')) {
+      throw new Error('invalid log query');
+    }
+    args.push(`--grep=${opts.query}`);
+  }
+  if (opts.ref !== undefined) {
+    assertSafeRef(opts.ref, 'revision');
+    args.push('--end-of-options', opts.ref);
+  }
   if (opts.path !== undefined) args.push('--', sanitizePathspec(opts.path));
 
   const res = await git(args, {
@@ -411,11 +443,17 @@ export interface FileDiffOptions extends Omit<DiffOptions, 'path'> {
   path: string;
 }
 
-function byteSlice(text: string, maxBytes: number): { text: string; truncated: boolean } {
+/** Truncate to a byte cap without splitting a UTF-8 code point. */
+export function byteSlice(text: string, maxBytes: number): { text: string; truncated: boolean } {
   const total = Buffer.byteLength(text, 'utf8');
   if (total <= maxBytes) return { text, truncated: false };
+  const buf = Buffer.from(text, 'utf8');
+  // Never cut inside a UTF-8 sequence: back up over continuation bytes
+  // (10xxxxxx) until the cut lands on a code-point boundary.
+  let end = Math.min(maxBytes, buf.length);
+  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end -= 1;
   return {
-    text: Buffer.from(text, 'utf8').subarray(0, maxBytes).toString('utf8'),
+    text: `${buf.subarray(0, end).toString('utf8')}\n… [truncated]`,
     truncated: true,
   };
 }
@@ -444,7 +482,7 @@ function appendDiffTarget(args: string[], opts: DiffOptions): void {
     args.push('--cached');
   } else if (opts.ref !== undefined) {
     assertSafeRef(opts.ref, 'revision');
-    args.push(opts.ref);
+    args.push('--end-of-options', opts.ref);
     if (opts.ref2 !== undefined) {
       assertSafeRef(opts.ref2, 'revision');
       args.push(opts.ref2);
@@ -490,6 +528,22 @@ export async function getDiff(repo: string, opts: DiffOptions = {}): Promise<Dif
   const paths = opts.path !== undefined ? [sanitizePathspec(opts.path)] : [];
   const result = await runDiff(repo, opts, paths, maxBytes);
   result.path = opts.path ?? '';
+  return result;
+}
+
+/** Multi-path diff in one git invocation (`path` in the result is ''). */
+export async function getDiffForPaths(
+  repo: string,
+  paths: string[],
+  opts: DiffOptions = {},
+): Promise<DiffResult> {
+  if (!Array.isArray(paths) || paths.length === 0) {
+    throw new Error('at least one path is required');
+  }
+  const safe = paths.map(sanitizePathspec);
+  const { maxBytes } = assertDiffOptions(opts);
+  const result = await runDiff(repo, opts, safe, maxBytes);
+  result.path = '';
   return result;
 }
 

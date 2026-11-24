@@ -11,6 +11,12 @@ import { git } from './git.js';
 
 const REF_FORBIDDEN = /[~^:?*[\\]/;
 
+/** Commit/tag/stash message cap (argv safety, E2BIG guard). */
+export const MAX_MESSAGE_BYTES = 64 * 1024;
+
+/** Pathspec cap (argv safety, E2BIG guard). */
+export const MAX_PATHSPEC_BYTES = 4096;
+
 /** Whitespace or C0/DEL control characters (forbidden in refnames). */
 function hasUnsafeWhitespace(value: string): boolean {
   for (let i = 0; i < value.length; i++) {
@@ -109,18 +115,26 @@ export async function assertValidTagName(name: string): Promise<void> {
 
 /**
  * Validate a repository-relative path used as a pathspec.
- * Rejects option injection, absolute paths, traversal and NUL bytes.
- * Callers still place paths after `--`.
+ * Rejects option injection, absolute paths, traversal, NUL bytes, pathspec
+ * magic (`:(...)`, `:!`) and oversized input.
+ * Callers still place paths after `--`; `GIT_LITERAL_PATHSPECS=1` is set in
+ * `git.ts` so even `*?[` stay literal.
  */
 export function sanitizePathspec(p: string): string {
   if (typeof p !== 'string' || p.length === 0) {
     throw new Error('path is required');
+  }
+  if (p.length > MAX_PATHSPEC_BYTES || Buffer.byteLength(p, 'utf8') > MAX_PATHSPEC_BYTES) {
+    throw new Error(`unsafe path (too long, max ${MAX_PATHSPEC_BYTES} bytes): ${p.slice(0, 64)}…`);
   }
   if (p.includes('\0')) {
     throw new Error(`unsafe path (NUL byte): ${p}`);
   }
   if (p.startsWith('-')) {
     throw new Error(`unsafe path (leading '-'): ${p}`);
+  }
+  if (p.startsWith(':')) {
+    throw new Error(`unsafe path (pathspec magic): ${p}`);
   }
   if (path.isAbsolute(p) || /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\')) {
     throw new Error(`unsafe path (absolute): ${p}`);
@@ -139,13 +153,19 @@ export function sanitizePathspecs(paths: string[]): string[] {
   return paths.map(sanitizePathspec);
 }
 
-/** Commit/tag message sanity (no NUL, non-empty after trim). */
+/** Commit/tag message sanity (no NUL, non-empty after trim, bounded size). */
 export function assertMessage(message: string, label = 'message'): void {
   if (typeof message !== 'string' || message.trim().length === 0) {
     throw new Error(`${label} is required`);
   }
   if (message.includes('\0')) {
     throw new Error(`${label} contains a NUL byte`);
+  }
+  if (
+    message.length > MAX_MESSAGE_BYTES ||
+    Buffer.byteLength(message, 'utf8') > MAX_MESSAGE_BYTES
+  ) {
+    throw new Error(`${label} is too long (max ${MAX_MESSAGE_BYTES} bytes)`);
   }
 }
 
@@ -156,11 +176,28 @@ export function assertSafeSha(sha: string): void {
   }
 }
 
+export interface RemoteUrlOptions {
+  /**
+   * Accept `file://` remotes. Internal opt-in for tests only — the REST layer
+   * never exposes it, so users cannot point a repo at an unregistered local
+   * work tree.
+   */
+  allowFileProtocol?: boolean;
+}
+
+/** A local filesystem path (`/x`, `./x`, `../x`, `~/x`, `C:\x`) is not a remote. */
+const LOCAL_REMOTE_PATH = /^(?:[a-zA-Z]:[\\/]|[\\/]|\.{1,2}[\\/]|~[\\/])/;
+
+/** SCP-like ssh shorthand: `[user@]host:path`. */
+const SCP_LIKE_REMOTE = /^(?:[A-Za-z0-9._~-]+@)?[A-Za-z0-9._-]+:/;
+
 /**
  * Remote URLs may not use a transport helper (`ext::`, `fd::`, any
- * `helper::address`), which would execute an arbitrary program.
+ * `helper::address`), a local path, or `file://` (that would let the panel
+ * read/write repositories outside the allowlist). http/https/ssh/git and the
+ * SCP-like ssh shorthand are allowed.
  */
-export function assertSafeRemoteUrl(url: string): void {
+export function assertSafeRemoteUrl(url: string, opts: RemoteUrlOptions = {}): void {
   if (typeof url !== 'string' || url.length === 0) {
     throw new Error('remote url is required');
   }
@@ -178,9 +215,29 @@ export function assertSafeRemoteUrl(url: string): void {
   }
   const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(url);
   if (scheme) {
-    const allowed = new Set(['http', 'https', 'ssh', 'git', 'file']);
-    if (!allowed.has(scheme[1]!.toLowerCase())) {
+    const name = scheme[1]!.toLowerCase();
+    if (name === 'file') {
+      if (opts.allowFileProtocol === true) return;
+      throw new Error(`unsafe remote url (file:// is not allowed): ${url}`);
+    }
+    const allowed = new Set(['http', 'https', 'ssh', 'git']);
+    if (!allowed.has(name)) {
       throw new Error(`unsupported remote url scheme: ${scheme[1]}`);
     }
+    return;
   }
+  if (LOCAL_REMOTE_PATH.test(url) || /^(?:file|ext|fd):/i.test(url)) {
+    throw new Error(`unsafe remote url (local path): ${url}`);
+  }
+  if (!SCP_LIKE_REMOTE.test(url)) {
+    throw new Error(`unsafe remote url (expected scheme:// or user@host:path): ${url}`);
+  }
+}
+
+/**
+ * Strip URL userinfo (`scheme://user:token@host/path` -> `scheme://***@host/path`)
+ * before a remote URL reaches a REST response, stderr or a log.
+ */
+export function redactUrl(url: string): string {
+  return url.replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/@\s]+@/, '$1***@');
 }

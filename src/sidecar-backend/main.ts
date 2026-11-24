@@ -1,51 +1,69 @@
 /**
- * Git Controls sidecar backend.
- * Serves the single-file UI and /api/* routes backed by src/core.
+ * Git Controls sidecar entry point.
+ *
+ * Assembly only: SidecarApp + repo registry + fs watchers + REST routes +
+ * the single-file UI page. All behaviour lives in `registry.ts`, `watch.ts`,
+ * `routes.ts` and `src/core`.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, fileURLToPath as toPath } from 'node:url';
-import { SidecarApp, Response } from 'sidecar_sdk';
-import { getStatus, repoInfoFor, canonicalPath } from '../core/repo.js';
-import { git } from '../core/git.js';
-import type { RepoInfo, WorkspaceContext } from '../core/types.js';
+import { fileURLToPath } from 'node:url';
+import { Response, SidecarApp } from 'sidecar_sdk';
+import { RepoRegistry } from './registry.js';
+import { registerApi } from './routes.js';
+import { RepoWatcher } from './watch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_FILE = path.join(__dirname, 'ui', 'index.html');
+const DEBOUNCE_MS = 500;
+
+function log(...args: unknown[]): void {
+  console.log('[git-controls]', ...args);
+}
+
+// The host restarts us (restart_policy=always), but a stray rejection should
+// log and keep the panel alive instead of taking the whole sidecar down.
+process.on('uncaughtException', (err) => {
+  console.error('[git-controls] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[git-controls] unhandledRejection:', reason);
+});
 
 const app = new SidecarApp();
 
-/** Workspace folder paths reported by the UI (from window.sidecar.getWorkspaceUris). */
-let workspacePaths: string[] = [];
-const workspaceRepos = new Map<string, RepoInfo>();
-const registeredRepos = new Map<string, RepoInfo>();
-
-function uriToPath(uri: string): string | null {
-  try {
-    if (uri.startsWith('file://')) return toPath(uri);
-    if (path.isAbsolute(uri)) return uri;
-    return null;
-  } catch {
-    return null;
-  }
+const dataDir =
+  process.env.PLUGIN_DATA ?? path.join(os.tmpdir(), 'agy-git-controls-data');
+if (!process.env.PLUGIN_DATA) {
+  log(`PLUGIN_DATA is not set; using temporary state dir ${dataDir}`);
 }
 
-async function resolveWorkspaceRepos(): Promise<RepoInfo[]> {
-  workspaceRepos.clear();
-  for (const p of workspacePaths) {
-    const info = await repoInfoFor(p, 'workspace');
-    if (info) workspaceRepos.set(info.path, info);
-  }
-  return [...workspaceRepos.values(), ...registeredRepos.values()];
+const registry = new RepoRegistry({ dataDir });
+await registry.load();
+
+const watcher = new RepoWatcher({ debounceMs: DEBOUNCE_MS });
+
+let syncChain: Promise<void> = Promise.resolve();
+function syncWatchers(): Promise<void> {
+  syncChain = syncChain
+    .then(async () => {
+      const repos = await registry.listRepos();
+      watcher.sync(repos.map((repo) => repo.path));
+    })
+    .catch((err) => {
+      console.warn('[git-controls] watcher sync failed:', err);
+    });
+  return syncChain;
 }
 
-function findRepo(repoPath: string): string | null {
-  if (workspaceRepos.has(repoPath)) return repoPath;
-  if (registeredRepos.has(repoPath)) return repoPath;
-  return null;
-}
+registry.subscribe(() => {
+  void syncWatchers();
+});
+await syncWatchers();
 
-// ---------- pages ----------
+// ---------- UI ----------
+
 app.page('/', () => {
   if (!fs.existsSync(UI_FILE)) {
     return new Response('UI not built — run pnpm build', { status: 500 });
@@ -53,49 +71,36 @@ app.page('/', () => {
   return new Response(fs.readFileSync(UI_FILE, 'utf-8'), { contentType: 'text/html' });
 });
 
-// ---------- api ----------
-app.api('/api/ping', () => ({ ok: true, ts: Date.now(), projectId: app.config.projectId }), 'GET');
+// ---------- REST ----------
 
-app.api('/api/context', async (data) => {
-  const uris = Array.isArray(data?.workspaceUris) ? (data.workspaceUris as string[]) : [];
-  workspacePaths = uris.map(uriToPath).filter((p): p is string => p !== null);
-  const repos = await resolveWorkspaceRepos();
-  const ctx: WorkspaceContext = { workspaceUris: workspacePaths, repos };
-  return ctx;
+registerApi(app, {
+  registry,
+  versionOf: (repo) => watcher.version(repo),
+  agent: {
+    startConversation: (message, opts) => app.startConversation(message, opts),
+    ...(app.config.projectId !== undefined ? { projectId: app.config.projectId } : {}),
+  },
 });
 
-app.api('/api/status', async (data) => {
-  const repo = typeof data?.repo === 'string' ? await canonicalPath(data.repo) : null;
-  if (!repo || !findRepo(repo)) return { error: 'repo not registered', code: 'ENOENT_REPO' };
-  return getStatus(repo);
+// ---------- lifecycle ----------
+
+process.once('exit', () => {
+  watcher.closeAll();
 });
 
-app.api('/api/repos/add', async (data) => {
-  const p = typeof data?.path === 'string' ? data.path : null;
-  if (!p) return { error: 'path required' };
-  const info = await repoInfoFor(await canonicalPath(p), 'registered');
-  if (!info) return { error: 'not a git work tree' };
-  registeredRepos.set(info.path, info);
-  return info;
-});
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    log(`received ${signal}; shutting down`);
+    watcher.closeAll();
+    void app.close().finally(() => process.exit(0));
+  });
+}
 
-app.api('/api/branches', async (data) => {
-  const repo = typeof data?.repo === 'string' ? await canonicalPath(data.repo) : null;
-  if (!repo || !findRepo(repo)) return { error: 'repo not registered', code: 'ENOENT_REPO' };
-  const res = await git(
-    ['for-each-ref', '--format=%(refname)%09%(refname:short)%09%(committerdate:iso8601)%09%(upstream:short)%09%(HEAD)', 'refs/heads', 'refs/remotes'],
-    { cwd: repo },
-  );
-  const branches = res.stdout
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const [ref = '', short = '', date = '', upstream = '', head = ''] = line.split('\t');
-      return { ref, name: short, remote: ref.startsWith('refs/remotes/'), lastCommitAt: date, upstream: upstream || null, current: head === '*' };
-    });
-  return { branches };
-});
-
-app.run().then(() => {
-  console.log('[git-controls] sidecar ready');
-});
+try {
+  await app.run();
+  log(`ready (${watcher.watchedCount} repo watcher(s), data dir ${dataDir})`);
+} catch (err) {
+  console.error('[git-controls] failed to start:', err);
+  watcher.closeAll();
+  process.exitCode = 1;
+}

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  byteSlice,
   getDiff,
   getFileDiff,
   getLog,
@@ -11,6 +12,7 @@ import {
   listTags,
   listWorktrees,
   parseCommitRefs,
+  parseStashList,
 } from '../src/core/query.js';
 import {
   commitAll,
@@ -101,6 +103,17 @@ describe('listBranches', () => {
       lastCommitSha: '',
     });
   });
+
+  it('skips the refs/remotes/*/HEAD symref alias', async () => {
+    const repo = await temp();
+    await repo.git(['remote', 'add', 'origin', 'https://example.com/repo.git']);
+    await repo.git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    await repo.git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+
+    const branches = await listBranches(repo.path);
+    expect(branches.map((b) => b.name)).toContain('origin/main');
+    expect(branches.some((b) => b.name.includes(' -> '))).toBe(false);
+  });
 });
 
 describe('listWorktrees', () => {
@@ -150,6 +163,27 @@ describe('listRemotes / listTags / listStashes', () => {
     ]);
   });
 
+  it('redacts credentials embedded in remote urls', async () => {
+    const repo = await temp();
+    await repo.git([
+      'remote',
+      'add',
+      'origin',
+      'https://user:secret-token@example.com/repo.git',
+    ]);
+    await repo.git([
+      'remote',
+      'set-url',
+      '--push',
+      'origin',
+      'https://other:another-token@example.com/repo.git',
+    ]);
+
+    const [remote] = await listRemotes(repo.path);
+    expect(remote?.fetchUrl).toBe('https://***@example.com/repo.git');
+    expect(remote?.pushUrl).toBe('https://***@example.com/repo.git');
+  });
+
   it('distinguishes annotated and lightweight tags', async () => {
     const repo = await temp();
     const head = (await repo.git(['rev-parse', 'HEAD'])).trim();
@@ -178,6 +212,20 @@ describe('listRemotes / listTags / listStashes', () => {
     expect(entries[1]).toMatchObject({ index: 1, message: 'first stash', branch: 'main' });
     expect(entries[0]?.date).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+
+  it('keeps tab-bearing subjects from shifting the date (NUL separator)', () => {
+    // Git whitespace-sanitises reflog messages, so a tab can never reach
+    // `%gs` through the CLI; the parser itself must still be tab-proof.
+    const parsed = parseStashList('On main: tab\tin\tmessage\x001700000000\n');
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toMatchObject({
+      index: 0,
+      name: 'stash@{0}',
+      branch: 'main',
+      message: 'tab\tin\tmessage',
+    });
+    expect(parsed[0]?.date).toBe(new Date(1_700_000_000 * 1000).toISOString());
+  });
 });
 
 describe('parseCommitRefs', () => {
@@ -202,6 +250,12 @@ describe('parseCommitRefs', () => {
       { name: 'main', type: 'branch' },
       { name: 'v1', type: 'tag' },
     ]);
+  });
+
+  it('ignores remote symref aliases instead of treating them as branch names', () => {
+    expect(
+      parseCommitRefs('refs/remotes/origin/HEAD -> refs/remotes/origin/main, refs/remotes/origin/main'),
+    ).toEqual([{ name: 'origin/main', type: 'remote' }]);
   });
 });
 
@@ -320,17 +374,35 @@ describe('getDiff / getFileDiff', () => {
     expect(againstHead.hunks).toContain('+line3');
   });
 
-  it('flags binary diffs and truncates oversized patches', async () => {
+  it('flags binary diffs and truncates oversized patches on a UTF-8 boundary', async () => {
     const repo = await temp({ files: { 'a.txt': 'line1\n' } });
     await writeRepoFile(repo.path, 'a.txt', 'line1\nline2\nline3\n');
     const truncated = await getDiff(repo.path, { path: 'a.txt', maxBytes: 10 });
     expect(truncated.truncated).toBe(true);
-    expect(Buffer.byteLength(truncated.hunks, 'utf8')).toBeLessThanOrEqual(10);
+    expect(truncated.hunks.endsWith('\n… [truncated]')).toBe(true);
+    const marker = '\n… [truncated]';
+    expect(Buffer.byteLength(truncated.hunks, 'utf8')).toBeLessThanOrEqual(
+      10 + Buffer.byteLength(marker, 'utf8'),
+    );
 
     await fs.writeFile(path.join(repo.path, 'bin.dat'), Buffer.from([0, 1, 2, 3, 0]));
     await repo.git(['add', 'bin.dat']);
     const binary = await getDiff(repo.path, { path: 'bin.dat', staged: true });
     expect(binary.binary).toBe(true);
+  });
+
+  it('byteSlice never splits a multi-byte code point', () => {
+    const marker = '\n… [truncated]';
+    const cut = (maxBytes: number): string => byteSlice('aé本', maxBytes).text;
+    expect(cut(2)).toBe(`a${marker}`);
+    expect(cut(3)).toBe(`aé${marker}`);
+    expect(cut(4)).toBe(`aé${marker}`);
+    // '本' spans bytes 3..5, so a 5-byte cut is still inside it: back up.
+    expect(cut(5)).toBe(`aé${marker}`);
+    for (const maxBytes of [2, 3, 4, 5]) {
+      expect(cut(maxBytes), String(maxBytes)).not.toContain('\uFFFD');
+    }
+    expect(byteSlice('aé本', 100)).toEqual({ text: 'aé本', truncated: false });
   });
 
   it('follows renames in a single-file diff', async () => {

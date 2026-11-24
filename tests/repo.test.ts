@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 describe('parsePorcelainV2', () => {
-  it('parses branch headers, staged/unstaged XY, renames, untracked and conflicts', () => {
+  it('parses branch headers, staged/unstaged XY, renames, untracked and conflicts (-z)', () => {
     const out = [
       '# branch.oid 0123456789abcdef0123456789abcdef01234567',
       '# branch.head main',
@@ -30,10 +30,12 @@ describe('parsePorcelainV2', () => {
       '1 M. N... 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb staged.txt',
       '1 .M N... 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb unstaged.txt',
       '1 MM N... 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb both.txt',
-      '2 R. N... 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb R100 renamed.txt\told.txt',
+      '2 R. N... 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb R100 renamed.txt',
+      'old.txt',
       'u UU N... 100644 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb cccccccccccccccccccccccccccccccccccccccc conflict.txt',
       '? untracked.txt',
-    ].join('\n');
+      '',
+    ].join('\0');
 
     const status = parsePorcelainV2(out, '/repo');
 
@@ -60,6 +62,24 @@ describe('parsePorcelainV2', () => {
     expect(status.conflicted).toHaveLength(1);
     expect(status.conflicted[0]).toMatchObject({ path: 'conflict.txt', conflicted: true });
     expect(status.untracked.map((c) => c.path)).toEqual(['untracked.txt']);
+  });
+
+  it('keeps quoted, tabbed and non-ASCII paths raw in -z output', () => {
+    const status = parsePorcelainV2(
+      ['# branch.head main', '? q"uote.txt', '? tab\there.txt', '? 测试.txt', ''].join('\0'),
+      '/repo',
+    );
+    expect(status.untracked.map((c) => c.path)).toEqual(['q"uote.txt', 'tab\there.txt', '测试.txt']);
+  });
+
+  it('still accepts the legacy newline/tab form', () => {
+    const status = parsePorcelainV2(
+      ['# branch.head main', '2 R. N... 100644 100644 100644 aaaa bbbb R100 new.txt\told.txt'].join(
+        '\n',
+      ),
+      '/repo',
+    );
+    expect(status.staged[0]).toMatchObject({ path: 'new.txt', origPath: 'old.txt' });
   });
 
   it('handles detached HEAD and unborn HEAD headers', () => {

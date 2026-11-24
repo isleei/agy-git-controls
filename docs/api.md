@@ -33,7 +33,8 @@ UI ↔ 后端的全部通道。除 `/api/ping` 外一律 `POST` + JSON body（`w
 | `/api/push` | `{repo,remote?,branch?,setUpstream?,forceWithLease?,confirmed?}` | Op | forceWithLease 需 confirmed |
 | `/api/log` | `{repo,skip?,maxCount?,path?,query?}` | `LogPage` | Graph 数据源 |
 | `/api/conflicts` | `{repo}` | `{files:string[],operation}` | |
-| `/api/merge` | `{repo,branch,noFf?,squash?,confirmed?}` | Op | |
+| `/api/merge` | `{repo,branch,noFf?,squash?,action?:'start'|'abort'}` | Op | abort 中止进行中 merge |
+| `/api/version` | `{repo}` | `{v:number,lastChangeAt?:number}` | 零 git 调用的脏标记计数，供前端轻轮询 |
 | `/api/rebase` | `{repo,onto,action?:'start'|'abort'|'continue'|'skip'}` | Op | |
 | `/api/cherry-pick` | `{repo,shas[],action?:'start'|'abort'|'continue'}` | Op | |
 | `/api/revert` | `{repo,shas[],noCommit?}` | Op | |

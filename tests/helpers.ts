@@ -92,6 +92,9 @@ export async function makeTempRepo(opts: TempRepoOptions = {}): Promise<TempRepo
   await gitExec(dir, ['config', 'user.email', 'test@example.com']);
   await gitExec(dir, ['config', 'commit.gpgsign', 'false']);
   await gitExec(dir, ['config', 'tag.gpgsign', 'false']);
+  // The default is true, but a developer's global config may set false.
+  // Pin it so quoted/escaped path handling is exercised deterministically.
+  await gitExec(dir, ['config', 'core.quotePath', 'true']);
 
   const files = opts.files ?? { 'README.md': '# test\n' };
   for (const [rel, content] of Object.entries(files)) {

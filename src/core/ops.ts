@@ -16,6 +16,7 @@ import {
   assertSafeSha,
   assertValidBranchName,
   assertValidTagName,
+  redactUrl,
   sanitizePathspecs,
 } from './refs.js';
 import { getStatus } from './repo.js';
@@ -49,6 +50,8 @@ async function runWrite(
   const stderr = res.stderr.trim();
   if (stdout) result.stdout = stdout;
   if (stderr) result.stderr = stderr;
+  if (res.timedOut) result.timedOut = true;
+  if (res.signal !== undefined) result.signal = res.signal;
   if (!result.ok && opts.conflicts) {
     const conflicted = await listConflicted(repo).catch(() => []);
     if (conflicted.length > 0) result.conflicted = conflicted;
@@ -135,6 +138,47 @@ function isUntracked(statusPaths: string[], requested: string): boolean {
   });
 }
 
+/** True when `target` is `root` itself or a descendant of it. */
+function isWithin(root: string, target: string): boolean {
+  const rel = path.relative(root, target);
+  return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
+}
+
+/**
+ * Resolve an untracked path for deletion, refusing anything that leaves the
+ * repository through a symlink (B1). Every component is `lstat`ed: a symlink
+ * anywhere — including the target itself — aborts instead of following it.
+ * Returns null when the target is already gone (deleting it is a no-op).
+ */
+async function resolveUntrackedTarget(repo: string, rel: string): Promise<string | null> {
+  const repoReal = await fs.realpath(repo);
+  const abs = path.resolve(repoReal, rel);
+  const relPath = path.relative(repoReal, abs);
+  if (relPath !== '' && !isWithin(repoReal, abs)) {
+    throw new Error(`refusing to delete outside the repository: ${rel}`);
+  }
+  let current = repoReal;
+  for (const segment of relPath.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    let stat;
+    try {
+      stat = await fs.lstat(current);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`refusing to delete a path through a symlink: ${rel}`);
+    }
+  }
+  // Defence in depth: the resolved parent must still live under the repo.
+  const parentReal = await fs.realpath(path.dirname(abs));
+  if (parentReal !== repoReal && !isWithin(repoReal, parentReal)) {
+    throw new Error(`refusing to delete outside the repository: ${rel}`);
+  }
+  return abs;
+}
+
 export async function discard(
   repo: string,
   paths: string[],
@@ -154,17 +198,31 @@ export async function discard(
 
     let result: OperationResult = { ok: true, code: 0 };
     if (tracked.length > 0) {
-      const args = ['restore'];
-      if (opts.staged) args.push('--staged');
-      args.push('--worktree', '--', ...tracked);
-      result = await runWrite(repo, args);
+      if (opts.staged && !(await hasHead(repo))) {
+        // Unborn HEAD: `restore` cannot resolve HEAD; drop the entries from
+        // the index instead (the work-tree files stay on disk).
+        result = await runWrite(repo, ['rm', '--cached', '-r', '--', ...tracked]);
+      } else {
+        const args = ['restore'];
+        if (opts.staged) args.push('--staged');
+        args.push('--worktree', '--', ...tracked);
+        result = await runWrite(repo, args);
+      }
       if (!result.ok) return result;
     }
 
     if (untracked.length > 0) {
       try {
         for (const p of untracked) {
-          await fs.rm(path.join(repo, p), { recursive: true, force: false });
+          const target = await resolveUntrackedTarget(repo, p);
+          if (target === null) continue;
+          try {
+            await fs.rm(target, { recursive: true, force: false });
+          } catch (err) {
+            // A concurrent removal between lstat and rm is success, not failure.
+            if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+            throw err;
+          }
         }
       } catch (err) {
         return {
@@ -216,7 +274,7 @@ export async function createBranch(
     await assertValidBranchName(opts.name);
     if (opts.startPoint !== undefined) assertSafeRef(opts.startPoint, 'start point');
     const args = opts.checkout ? ['checkout', '-b', opts.name] : ['branch', opts.name];
-    if (opts.startPoint !== undefined) args.push(opts.startPoint);
+    if (opts.startPoint !== undefined) args.push('--end-of-options', opts.startPoint);
     return runWrite(repo, args);
   });
 }
@@ -256,6 +314,29 @@ export async function deleteBranch(
   });
 }
 
+export interface TrackRemoteOptions {
+  /** Local branch name; defaults to the remote branch without its remote prefix. */
+  localName?: string;
+}
+
+/** Create a local branch tracking `remoteBranch` (e.g. `origin/feature`) and check it out. */
+export async function trackRemote(
+  repo: string,
+  remoteBranch: string,
+  opts: TrackRemoteOptions = {},
+): Promise<OperationResult> {
+  return repoWrite(repo, async () => {
+    assertSafeRef(remoteBranch, 'remote branch');
+    const slash = remoteBranch.indexOf('/');
+    if (slash <= 0 || slash === remoteBranch.length - 1) {
+      throw new Error(`invalid remote branch (expected <remote>/<branch>): ${remoteBranch}`);
+    }
+    const local = opts.localName ?? remoteBranch.slice(slash + 1);
+    await assertValidBranchName(local);
+    return runWrite(repo, ['checkout', '--track', '-b', local, '--end-of-options', remoteBranch]);
+  });
+}
+
 export async function setUpstream(
   repo: string,
   branch: string,
@@ -264,10 +345,15 @@ export async function setUpstream(
   return repoWrite(repo, async () => {
     await assertValidBranchName(branch);
     if (upstream === null) {
-      return runWrite(repo, ['branch', '--unset-upstream', branch]);
+      return runWrite(repo, ['branch', '--unset-upstream', '--end-of-options', branch]);
     }
     assertSafeRef(upstream, 'upstream');
-    return runWrite(repo, ['branch', `--set-upstream-to=${upstream}`, branch]);
+    return runWrite(repo, [
+      'branch',
+      `--set-upstream-to=${upstream}`,
+      '--end-of-options',
+      branch,
+    ]);
   });
 }
 
@@ -355,6 +441,10 @@ export interface PushOptions {
 
 export async function push(repo: string, opts: PushOptions = {}): Promise<OperationResult> {
   return repoWrite(repo, () => {
+    if (opts.branch !== undefined && opts.remote === undefined) {
+      // `git push origin` would treat the branch as the remote name.
+      throw new Error('push branch requires a remote');
+    }
     const args = ['push'];
     if (opts.setUpstream) args.push('--set-upstream');
     if (opts.forceWithLease) args.push('--force-with-lease');
@@ -395,7 +485,7 @@ export async function merge(
     const args = ['merge'];
     if (opts.noFf) args.push('--no-ff');
     if (opts.squash) args.push('--squash');
-    args.push(branch);
+    args.push('--end-of-options', branch);
     return runWrite(repo, args, {
       env: { GIT_EDITOR: 'true' },
       conflicts: true,
@@ -426,7 +516,7 @@ export async function rebase(
     }
     if (opts.skip) return runWrite(repo, ['rebase', '--skip'], { conflicts: true });
     assertSafeRef(onto, 'revision');
-    return runWrite(repo, ['rebase', onto], {
+    return runWrite(repo, ['rebase', '--end-of-options', onto], {
       env: { GIT_EDITOR: 'true' },
       conflicts: true,
     });
@@ -456,7 +546,7 @@ export async function cherryPick(
       throw new Error('at least one commit is required');
     }
     for (const sha of shas) assertSafeSha(sha);
-    return runWrite(repo, ['cherry-pick', ...shas], { conflicts: true });
+    return runWrite(repo, ['cherry-pick', '--end-of-options', ...shas], { conflicts: true });
   });
 }
 
@@ -476,7 +566,7 @@ export async function revert(
     for (const sha of shas) assertSafeSha(sha);
     const args = ['revert', '--no-edit'];
     if (opts.noCommit) args.push('--no-commit');
-    args.push(...shas);
+    args.push('--end-of-options', ...shas);
     return runWrite(repo, args, { conflicts: true });
   });
 }
@@ -515,6 +605,11 @@ export async function stash(repo: string, opts: StashOptions): Promise<Operation
         if (opts.includeUntracked) args.push('-u');
         if (opts.paths !== undefined && opts.paths.length > 0) {
           args.push('--', ...sanitizePathspecs(opts.paths));
+        } else if (opts.includeUntracked) {
+          // `stash -u` cleans untracked files through an internal magic
+          // pathspec, which GIT_LITERAL_PATHSPECS neutralises: without an
+          // explicit `.` the files would be stashed but stay on disk.
+          args.push('--', '.');
         }
         return runWrite(repo, args);
       }
@@ -544,6 +639,58 @@ export interface WorktreeAddOptions {
   detached?: boolean;
 }
 
+/**
+ * Worktrees may only be created/removed under `path.dirname(repo)` and never
+ * inside the repository itself (which includes `.git`). The parent chain is
+ * realpath'ed so a symlink inside the allowed root cannot redirect the write
+ * elsewhere (M2).
+ */
+async function resolveWorktreePath(repo: string, input: string): Promise<string> {
+  if (typeof input !== 'string' || input.length === 0 || input.includes('\0')) {
+    throw new Error('worktree path is required');
+  }
+  const repoReal = await fs.realpath(repo);
+  const parent = path.dirname(repoReal);
+  const target = path.resolve(repoReal, input);
+  const relToParent = path.relative(parent, target);
+  if (relToParent === '' || !isWithin(parent, target)) {
+    throw new Error(`worktree path must be a directory under ${parent}: ${input}`);
+  }
+  if (isWithin(repoReal, target)) {
+    throw new Error(`worktree path must be outside the repository: ${input}`);
+  }
+  if (relToParent.split(path.sep).includes('.git')) {
+    throw new Error(`worktree path must not point into a .git directory: ${input}`);
+  }
+
+  // Resolve the nearest existing ancestor; the rest of the path does not
+  // exist yet and is appended to its real form.
+  let probe = target;
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      const realProbe = await fs.realpath(probe);
+      const realTarget =
+        missing.length === 0 ? realProbe : path.join(realProbe, ...missing);
+      if (realTarget === parent || !isWithin(parent, realTarget)) {
+        throw new Error(`worktree path escapes ${parent} through a symlink: ${input}`);
+      }
+      if (isWithin(repoReal, realTarget)) {
+        throw new Error(`worktree path resolves inside the repository: ${input}`);
+      }
+      return realTarget;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      const up = path.dirname(probe);
+      if (up === probe) {
+        throw new Error(`cannot resolve worktree path: ${input}`);
+      }
+      missing.unshift(path.basename(probe));
+      probe = up;
+    }
+  }
+}
+
 export async function worktreeAdd(
   repo: string,
   opts: WorktreeAddOptions,
@@ -558,7 +705,7 @@ export async function worktreeAdd(
     if (opts.newBranch !== undefined) await assertValidBranchName(opts.newBranch);
     if (opts.branch !== undefined) assertSafeRef(opts.branch, 'branch');
 
-    const target = path.resolve(repo, opts.path);
+    const target = await resolveWorktreePath(repo, opts.path);
     const args = ['worktree', 'add'];
     if (opts.detached) args.push('--detach');
     if (opts.newBranch !== undefined) args.push('-b', opts.newBranch);
@@ -577,11 +724,8 @@ export async function worktreeRemove(
   repo: string,
   opts: WorktreeRemoveOptions,
 ): Promise<OperationResult> {
-  return repoWrite(repo, () => {
-    if (typeof opts.path !== 'string' || opts.path.length === 0 || opts.path.includes('\0')) {
-      throw new Error('worktree path is required');
-    }
-    const target = path.resolve(repo, opts.path);
+  return repoWrite(repo, async () => {
+    const target = await resolveWorktreePath(repo, opts.path);
     const args = ['worktree', 'remove'];
     if (opts.force) args.push('--force');
     args.push(target);
@@ -613,7 +757,7 @@ export async function createTag(repo: string, opts: CreateTagOptions): Promise<O
     if (annotated) args.push('-a');
     if (opts.message !== undefined) args.push('-m', opts.message);
     args.push(opts.name);
-    if (opts.ref !== undefined) args.push(opts.ref);
+    if (opts.ref !== undefined) args.push('--end-of-options', opts.ref);
     return runWrite(repo, args);
   });
 }
@@ -654,16 +798,23 @@ export async function pushTag(
 /* remotes                                                             */
 /* ------------------------------------------------------------------ */
 
+/** Remote commands echo their URL argument; never return credentials. */
+function redactResult(result: OperationResult): OperationResult {
+  if (result.stdout) result.stdout = redactUrl(result.stdout);
+  if (result.stderr) result.stderr = redactUrl(result.stderr);
+  return result;
+}
+
 export interface RemoteAddOptions {
   name: string;
   url: string;
 }
 
 export async function remoteAdd(repo: string, opts: RemoteAddOptions): Promise<OperationResult> {
-  return repoWrite(repo, () => {
+  return repoWrite(repo, async () => {
     assertSafeRef(opts.name, 'remote');
     assertSafeRemoteUrl(opts.url);
-    return runWrite(repo, ['remote', 'add', opts.name, opts.url]);
+    return redactResult(await runWrite(repo, ['remote', 'add', opts.name, opts.url]));
   });
 }
 
@@ -685,12 +836,12 @@ export async function setRemoteUrl(
   url: string,
   opts: SetRemoteUrlOptions = {},
 ): Promise<OperationResult> {
-  return repoWrite(repo, () => {
+  return repoWrite(repo, async () => {
     assertSafeRef(name, 'remote');
     assertSafeRemoteUrl(url);
     const args = ['remote', 'set-url'];
     if (opts.push) args.push('--push');
     args.push(name, url);
-    return runWrite(repo, args);
+    return redactResult(await runWrite(repo, args));
   });
 }

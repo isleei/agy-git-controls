@@ -146,6 +146,10 @@ export interface OperationResult {
   stdout?: string;
   stderr?: string;
   code?: number;
+  /** The git process hit the operation timeout. */
+  timedOut?: boolean;
+  /** Signal that terminated git (SIGTERM on timeout/abort). */
+  signal?: string;
   /** Unmerged paths present after the operation failed. */
   conflicted?: string[];
 }

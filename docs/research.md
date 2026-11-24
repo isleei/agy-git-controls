@@ -32,6 +32,7 @@
 
 ## 待验证/风险
 
+- **跨进程写锁未实现（已知降级）**：`src/core/locks.ts` 只提供进程内互斥，sidecar 后端与 MCP server（stdio，独立进程）各自持有一份队列。当前 MCP 仅暴露只读工具，写工具只走面板确认的 REST 路径，因此暂不引入 `PLUGIN_DATA` 下的文件锁；新增 MCP 写工具前必须补跨进程锁。
 - `SIDECAR_UI_ENTRYPOINT_SIDEBAR`/`FULL_PANE` 枚举存在（language_server 二进制字符串），未实测；AUX_PANE 已实测。
 - Sidecar 视图跟随"当前会话"还是全局常驻：ui_config.views 目前一个 `/` 面板；多项目切换时 workspace push 是否随会话项目变化——`onWorkspaceChange` 已接，实测时确认。
 - `agy plugin install <dir>` 与手动同步到 plugins 目录的等价性（install 可能额外做 registry 记录）；分发优先走官方 `agy plugin install` / Marketplace。
