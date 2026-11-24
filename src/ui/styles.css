@@ -2251,6 +2251,50 @@ a {
 }
 
 /* ------------------------------------------------------------------ */
+/* remotes & tags                                                      */
+/* ------------------------------------------------------------------ */
+
+.group-empty {
+  padding: 6px 12px;
+  color: var(--agc-muted-fg);
+  font-size: 10.5px;
+}
+
+.remote-row,
+.tag-row {
+  gap: 6px;
+}
+
+.remote-name {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.remote-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--agc-muted-fg);
+  font-family: var(--agc-mono);
+  font-size: 10px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tag-sha {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--agc-muted-fg);
+  font-family: var(--agc-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
 /* modals                                                              */
 /* ------------------------------------------------------------------ */
 

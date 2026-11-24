@@ -15,6 +15,7 @@ import { BranchesSection } from './sections/Branches';
 import { HistorySection } from './sections/History';
 import { StashSection } from './sections/Stash';
 import { WorktreesSection } from './sections/Worktrees';
+import { RemotesSection } from './sections/Remotes';
 import { fireEscape } from './hooks/useEscape';
 import { isEditableTarget, modLabel } from './utils';
 
@@ -35,6 +36,8 @@ function sectionCount(section: Section, state: ReturnType<typeof useStore>['stat
       return state.stashes.length;
     case 'worktrees':
       return state.worktrees.length;
+    case 'remotes':
+      return state.remotes.length + state.tags.length;
     default:
       return 0;
   }
@@ -52,6 +55,8 @@ function SectionView({ section }: { section: Section }) {
       return <StashSection />;
     case 'worktrees':
       return <WorktreesSection />;
+    case 'remotes':
+      return <RemotesSection />;
     default:
       return null;
   }
@@ -98,7 +103,7 @@ function Shell() {
         return;
       }
       const mod = event.metaKey || event.ctrlKey;
-      if (mod && !event.altKey && !event.shiftKey && /^[1-5]$/.test(event.key)) {
+      if (mod && !event.altKey && !event.shiftKey && /^[1-6]$/.test(event.key)) {
         const target = SECTIONS[Number(event.key) - 1];
         if (target) {
           event.preventDefault();

@@ -18,13 +18,15 @@ import {
 import type {
   BranchInfo,
   OperationResult,
+  RemoteInfo,
   RepoInfo,
   RepoStatus,
   StashEntry,
+  TagInfo,
   WorktreeInfo,
 } from '../core/types.js';
 
-export type Section = 'changes' | 'branches' | 'history' | 'stash' | 'worktrees';
+export type Section = 'changes' | 'branches' | 'history' | 'stash' | 'worktrees' | 'remotes';
 
 export const SECTIONS: ReadonlyArray<{ id: Section; label: string }> = [
   { id: 'changes', label: 'Changes' },
@@ -32,6 +34,7 @@ export const SECTIONS: ReadonlyArray<{ id: Section; label: string }> = [
   { id: 'history', label: 'History' },
   { id: 'stash', label: 'Stash' },
   { id: 'worktrees', label: 'Worktrees' },
+  { id: 'remotes', label: 'Remotes' },
 ];
 
 export type ToastKind = 'success' | 'error' | 'info';
@@ -97,6 +100,12 @@ interface State {
   worktrees: WorktreeInfo[];
   worktreesLoading: boolean;
   worktreesError: string | null;
+  remotes: RemoteInfo[];
+  remotesLoading: boolean;
+  remotesError: string | null;
+  tags: TagInfo[];
+  tagsLoading: boolean;
+  tagsError: string | null;
   busy: Record<string, number>;
   toasts: ToastItem[];
   confirm: PendingConfirm | null;
@@ -125,6 +134,12 @@ type Action =
   | { type: 'worktrees-loading' }
   | { type: 'worktrees'; worktrees: WorktreeInfo[] }
   | { type: 'worktrees-error'; error: string }
+  | { type: 'remotes-loading' }
+  | { type: 'remotes'; remotes: RemoteInfo[] }
+  | { type: 'remotes-error'; error: string }
+  | { type: 'tags-loading' }
+  | { type: 'tags'; tags: TagInfo[] }
+  | { type: 'tags-error'; error: string }
   | { type: 'busy'; key: string; on: boolean }
   | { type: 'toast'; toast: ToastItem }
   | { type: 'dismiss-toast'; id: number }
@@ -151,6 +166,12 @@ const initialState: State = {
   worktrees: [],
   worktreesLoading: false,
   worktreesError: null,
+  remotes: [],
+  remotesLoading: false,
+  remotesError: null,
+  tags: [],
+  tagsLoading: false,
+  tagsError: null,
   busy: {},
   toasts: [],
   confirm: null,
@@ -188,6 +209,12 @@ function reducer(state: State, action: Action): State {
         worktrees: [],
         worktreesLoading: false,
         worktreesError: null,
+        remotes: [],
+        remotesLoading: false,
+        remotesError: null,
+        tags: [],
+        tagsLoading: false,
+        tagsError: null,
       };
     case 'status-loading':
       return action.silent ? state : { ...state, statusLoading: true };
@@ -218,6 +245,18 @@ function reducer(state: State, action: Action): State {
       };
     case 'worktrees-error':
       return { ...state, worktreesLoading: false, worktreesError: action.error };
+    case 'remotes-loading':
+      return { ...state, remotesLoading: true, remotesError: null };
+    case 'remotes':
+      return { ...state, remotes: action.remotes, remotesLoading: false, remotesError: null };
+    case 'remotes-error':
+      return { ...state, remotesLoading: false, remotesError: action.error };
+    case 'tags-loading':
+      return { ...state, tagsLoading: true, tagsError: null };
+    case 'tags':
+      return { ...state, tags: action.tags, tagsLoading: false, tagsError: null };
+    case 'tags-error':
+      return { ...state, tagsLoading: false, tagsError: action.error };
     case 'busy': {
       const next = { ...state.busy };
       const count = (next[action.key] ?? 0) + (action.on ? 1 : -1);
@@ -260,6 +299,7 @@ export interface StoreValue {
   refreshBranches: () => Promise<void>;
   refreshStashes: () => Promise<void>;
   refreshWorktrees: () => Promise<void>;
+  refreshRemotes: () => Promise<void>;
   refreshAll: () => Promise<void>;
   toast: (kind: ToastKind, title: string, detail?: string) => void;
   dismissToast: (id: number) => void;
@@ -380,12 +420,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshRemotes = useCallback(async () => {
+    const repo = stateRef.current.activeRepo;
+    if (!repo) return;
+    dispatch({ type: 'remotes-loading' });
+    dispatch({ type: 'tags-loading' });
+    const [remotesResult, tagsResult] = await Promise.allSettled([
+      api.remotes(repo),
+      api.tags(repo),
+    ]);
+    if (stateRef.current.activeRepo !== repo) return;
+    if (remotesResult.status === 'fulfilled') {
+      dispatch({ type: 'remotes', remotes: remotesResult.value.remotes });
+    } else {
+      dispatch({ type: 'remotes-error', error: errorMessage(remotesResult.reason) });
+    }
+    if (tagsResult.status === 'fulfilled') {
+      dispatch({ type: 'tags', tags: tagsResult.value.tags });
+    } else {
+      dispatch({ type: 'tags-error', error: errorMessage(tagsResult.reason) });
+    }
+  }, []);
+
   const refreshCurrentSection = useCallback(() => {
     const section = stateRef.current.section;
     if (section === 'branches') void refreshBranches();
     else if (section === 'stash') void refreshStashes();
     else if (section === 'worktrees') void refreshWorktrees();
-  }, [refreshBranches, refreshStashes, refreshWorktrees]);
+    else if (section === 'remotes') void refreshRemotes();
+  }, [refreshBranches, refreshStashes, refreshWorktrees, refreshRemotes]);
 
   const refreshAll = useCallback(async () => {
     dispatch({ type: 'data-changed' });
@@ -394,8 +457,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refreshBranches(),
       refreshStashes(),
       refreshWorktrees(),
+      refreshRemotes(),
     ]);
-  }, [refreshStatus, refreshBranches, refreshStashes, refreshWorktrees]);
+  }, [refreshStatus, refreshBranches, refreshStashes, refreshWorktrees, refreshRemotes]);
 
   /* ---------------------------------------------------------------- */
   /* confirmation                                                      */
@@ -555,7 +619,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void refreshBranches();
     void refreshStashes();
     void refreshWorktrees();
-  }, [state.activeRepo, refreshStatus, refreshBranches, refreshStashes, refreshWorktrees]);
+    void refreshRemotes();
+  }, [state.activeRepo, refreshStatus, refreshBranches, refreshStashes, refreshWorktrees, refreshRemotes]);
 
   /* Light dirty-poll: /api/version (no git call) every 3s while visible. */
   useEffect(() => {
@@ -678,6 +743,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refreshBranches,
       refreshStashes,
       refreshWorktrees,
+      refreshRemotes,
       refreshAll,
       toast,
       dismissToast,
@@ -697,6 +763,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refreshBranches,
       refreshStashes,
       refreshWorktrees,
+      refreshRemotes,
       refreshAll,
       toast,
       dismissToast,
