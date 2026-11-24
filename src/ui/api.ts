@@ -224,6 +224,7 @@ export interface SendToConversationRequest {
   kind: 'diff' | 'commit';
   ref?: string;
   paths?: string[];
+  staged?: boolean;
   prompt?: string;
 }
 

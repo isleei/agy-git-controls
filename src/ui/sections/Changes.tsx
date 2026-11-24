@@ -6,10 +6,11 @@ import {
   Minus,
   Plus,
   RotateCw,
+  Sparkles,
   Undo2,
   X,
 } from 'lucide-react';
-import { api } from '../api';
+import { api, errorMessage } from '../api';
 import type { FileChange, RepoStatus } from '../../core/types.js';
 import { useStore } from '../store';
 import { useVirtualRows } from '../hooks/useVirtualRows';
@@ -66,6 +67,7 @@ export function ChangesSection() {
   const status = state.status;
   const [message, setMessage] = useState('');
   const [amend, setAmend] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<GroupId, boolean>>({
     conflicts: false,
     staged: false,
@@ -285,6 +287,24 @@ export function ChangesSection() {
     if (result?.ok) resetComposer();
   };
 
+  const askAiForMessage = async (): Promise<void> => {
+    if (!activeRepo || stagedCount === 0) return;
+    setAiBusy(true);
+    try {
+      await api.sendToConversation(activeRepo, {
+        kind: 'diff',
+        staged: true,
+        prompt:
+          'Write a concise conventional-commit message (subject + optional body) for these staged changes. Reply with the message only.',
+      });
+      toast('success', 'Staged diff sent to Agent', 'Pick the suggested message from the conversation.');
+    } catch (err) {
+      toast('error', 'Cannot reach the Agent', errorMessage(err));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   const commitAndPush = async (): Promise<void> => {
     if (!activeRepo || !canCommit || !status?.branch) return;
     const result = await run('commit', () => api.commit(activeRepo, { message: message.trim(), amend }), {
@@ -486,6 +506,15 @@ export function ChangesSection() {
                 : `${stagedCount} staged`}
           </span>
           <div className="commit-buttons">
+            <button
+              type="button"
+              className="icon-btn"
+              disabled={!activeRepo || stagedCount === 0 || aiBusy}
+              onClick={() => void askAiForMessage()}
+              title="Send the staged diff to the Agent and ask for a commit message"
+            >
+              {aiBusy ? <Spinner size={11} /> : <Sparkles size={12} />}
+            </button>
             <button
               type="button"
               className="btn btn-primary btn-sm"

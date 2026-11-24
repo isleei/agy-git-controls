@@ -803,17 +803,23 @@ export function registerApi(app: ApiAppLike, deps: RouteDeps): void {
       const paths = optStringArray(body, 'paths');
       if (paths !== undefined) coreCheck(() => refs.sanitizePathspecs(paths));
       if (kind === 'commit' && paths !== undefined) invalid('paths only applies to kind=diff');
+      const staged = optBool(body, 'staged');
+      if (kind === 'commit' && staged !== undefined) invalid('staged only applies to kind=diff');
       const prompt = optString(body, 'prompt', MAX_PROMPT_LEN);
       const repo = await requireRepo(registry, body);
 
       const agent = deps.agent;
       if (!agent) throw new RouteError('agent API is unavailable', 'EAGENT');
 
+      const diffOpts = {
+        ...(ref !== undefined ? { ref } : {}),
+        ...(staged !== undefined ? { staged } : {}),
+      };
       let content: string;
       if (kind === 'diff') {
         const diff = paths
-          ? await query.getDiffForPaths(repo, paths, { ...(ref !== undefined ? { ref } : {}) })
-          : await query.getDiff(repo, { ...(ref !== undefined ? { ref } : {}) });
+          ? await query.getDiffForPaths(repo, paths, diffOpts)
+          : await query.getDiff(repo, diffOpts);
         content = diff.hunks.trim()
           ? `\`\`\`diff\n${diff.hunks.trimEnd()}\n\`\`\``
           : '(no changes)';
