@@ -464,6 +464,9 @@ export function Header() {
           ) : null}
         </div>
 
+      </div>
+
+      <div className="header-row sync-row">
         {status ? (
           <button
             type="button"
@@ -481,7 +484,9 @@ export function Header() {
               {status.behind}
             </span>
           </button>
-        ) : null}
+        ) : (
+          <span />
+        )}
 
         <div className="sync-group">
           <button

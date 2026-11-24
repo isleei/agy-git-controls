@@ -401,6 +401,24 @@ a {
   min-width: 0;
 }
 
+.branch-dropdown {
+  flex: 1;
+}
+
+.branch-btn {
+  width: 100%;
+}
+
+.branch-btn .branch-name {
+  flex: 1;
+  max-width: none;
+  text-align: left;
+}
+
+.sync-row {
+  justify-content: space-between;
+}
+
 .repo-btn,
 .branch-btn {
   display: flex;
