@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "git-controls": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/mcp/git-server.mjs"]
+    }
+  }
+}
