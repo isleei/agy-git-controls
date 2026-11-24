@@ -447,10 +447,7 @@ a {
 
 .mini-badge {
   flex: none;
-  padding: 0 3px;
-  border: 1px solid var(--agc-border);
-  border-radius: 3px;
-  background: var(--agc-muted);
+  padding: 0 2px;
   color: var(--agc-muted-fg);
   font-size: 8.5px;
   line-height: 13px;
@@ -464,9 +461,8 @@ a {
   gap: 4px;
   flex: none;
   height: 20px;
-  padding: 0 5px;
-  border: 1px solid var(--agc-border);
-  border-radius: 10px;
+  padding: 0 4px;
+  border-radius: 4px;
   color: var(--agc-muted-fg);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
@@ -541,16 +537,16 @@ a {
   gap: 4px;
   height: 24px;
   padding: 0 9px;
-  border: 1px solid var(--agc-border);
+  border: 1px solid transparent;
   border-radius: 4px;
-  background: var(--agc-muted);
+  background: transparent;
   color: var(--agc-fg);
   font-size: 11.5px;
   white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--agc-active);
+  background: var(--agc-hover);
 }
 
 .btn-primary {
@@ -632,7 +628,7 @@ a {
   align-items: center;
   height: 20px;
   padding: 0 6px;
-  border: 1px solid var(--agc-border);
+  border: 1px solid transparent;
   border-radius: 3px;
   color: var(--agc-muted-fg);
   font-size: 10.5px;
@@ -644,7 +640,6 @@ a {
 }
 
 .toggle.active {
-  border-color: var(--agc-accent);
   background: var(--agc-active);
   color: var(--agc-fg);
 }
@@ -701,12 +696,12 @@ a {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
-  height: 27px;
-  padding: 0 8px;
+  gap: 3px;
+  height: 26px;
+  padding: 0 6px;
   border-bottom: 2px solid transparent;
   color: var(--agc-muted-fg);
-  font-size: 11.5px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -721,30 +716,25 @@ a {
 }
 
 .tab-badge {
-  min-width: 15px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--agc-muted);
+  min-width: 0;
+  padding: 0;
   color: var(--agc-muted-fg);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 14px;
-  text-align: center;
+  font-size: 9.5px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
 .tab.active .tab-badge {
-  background: var(--agc-accent);
-  color: var(--agc-accent-fg);
+  color: var(--agc-accent);
 }
 
 .section-toolbar {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
-  min-height: 30px;
-  padding: 4px 6px;
+  gap: 2px;
+  min-height: 26px;
+  padding: 3px 6px;
   border-bottom: 1px solid var(--agc-border);
 }
 
@@ -756,14 +746,14 @@ a {
   min-width: 0;
   height: 22px;
   padding: 0 5px;
-  border: 1px solid var(--agc-border);
+  border: 1px solid transparent;
   border-radius: 4px;
   background: var(--agc-muted);
   color: var(--agc-muted-fg);
 }
 
 .search-box:focus-within {
-  border-color: var(--agc-accent);
+  border-color: var(--agc-border);
 }
 
 .search-input {
@@ -1039,7 +1029,7 @@ a {
   width: 12px;
   font-family: var(--agc-mono);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   text-align: center;
 }
 
@@ -1087,7 +1077,6 @@ a {
   position: sticky;
   top: 0;
   z-index: 3;
-  border-bottom: 1px solid var(--agc-border);
 }
 
 .group-toggle {
@@ -1109,15 +1098,11 @@ a {
 }
 
 .group-count {
-  min-width: 15px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--agc-muted);
+  min-width: 0;
+  padding: 0;
   color: var(--agc-muted-fg);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 14px;
-  text-align: center;
+  font-size: 9.5px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1219,7 +1204,7 @@ a {
   min-height: 48px;
   max-height: 30vh;
   padding: 5px 6px;
-  border: 1px solid var(--agc-border);
+  border: 1px solid transparent;
   border-radius: 4px;
   outline: none;
   background: var(--agc-muted);
@@ -1231,8 +1216,7 @@ a {
 }
 
 .commit-input:focus {
-  border-color: var(--agc-accent);
-  background: var(--agc-bg);
+  border-color: var(--agc-border);
 }
 
 .commit-actions {
@@ -2229,20 +2213,18 @@ a {
   flex: none;
   align-items: center;
   gap: 2px;
-  padding: 0 4px;
-  border: 1px solid var(--agc-border);
-  border-radius: 3px;
+  padding: 0 2px;
   font-size: 8.5px;
   line-height: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .worktree-badge.locked {
-  background: var(--agc-modified-bg);
   color: var(--agc-modified);
 }
 
 .worktree-badge.prunable {
-  background: var(--agc-deleted-bg);
   color: var(--agc-deleted);
 }
 
