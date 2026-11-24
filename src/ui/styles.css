@@ -377,8 +377,8 @@ a {
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: 3px;
-  padding: 4px 6px;
+  gap: 5px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--agc-border);
   background: var(--agc-bg);
 }
@@ -386,9 +386,9 @@ a {
 .header-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
-  min-height: 22px;
+  min-height: 24px;
 }
 
 .header-spacer {
@@ -983,9 +983,9 @@ a {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: 23px;
   min-width: 0;
-  padding: 0 6px;
+  padding: 0 8px;
   cursor: default;
 }
 
@@ -1067,9 +1067,9 @@ a {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 2px;
-  height: 22px;
-  padding: 0 4px;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
   background: var(--agc-bg);
 }
 
@@ -1194,8 +1194,8 @@ a {
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: 4px;
-  padding: 5px;
+  gap: 6px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--agc-border);
 }
 
@@ -1222,24 +1222,15 @@ a {
 .commit-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
-}
-
-.composer-hint {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--agc-muted-fg);
-  font-size: 10.5px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .commit-buttons {
   display: flex;
   flex: none;
-  gap: 4px;
+  gap: 5px;
+  margin-left: auto;
 }
 
 .operation-banner {
@@ -1261,8 +1252,8 @@ a {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
-  padding: 2px 5px;
+  gap: 8px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--agc-border);
 }
 
@@ -2495,8 +2486,7 @@ a {
     display: none;
   }
 
-  .changes-summary,
-  .composer-hint {
+  .changes-summary {
     display: none;
   }
 

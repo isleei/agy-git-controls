@@ -498,13 +498,6 @@ export function ChangesSection() {
           >
             Amend
           </button>
-          <span className="composer-hint">
-            {message.trim().length === 0
-              ? 'Enter a message'
-              : stagedCount === 0 && !amend
-                ? 'Stage files first'
-                : `${stagedCount} staged`}
-          </span>
           <div className="commit-buttons">
             <button
               type="button"
@@ -520,7 +513,13 @@ export function ChangesSection() {
               className="btn btn-primary btn-sm"
               disabled={!canCommit || isBusy('commit')}
               onClick={() => void commit()}
-              title="Commit (Enter)"
+              title={
+                canCommit
+                  ? 'Commit (Enter)'
+                  : message.trim().length === 0
+                    ? 'Enter a message first'
+                    : 'Stage files first'
+              }
             >
               {isBusy('commit') ? <Spinner size={11} /> : <Check size={12} />}
               <span className="btn-label">Commit</span>
