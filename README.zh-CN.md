@@ -4,6 +4,14 @@
 
 [English README](README.md)
 
+## 截图
+
+<p align="center">
+  <img src="docs/screenshots/changes.png" width="31%" alt="变更页与提交框" />
+  <img src="docs/screenshots/branches.png" width="31%" alt="分支列表（本地与远程）" />
+  <img src="docs/screenshots/history.png" width="31%" alt="历史页 Git Graph" />
+</p>
+
 ## 功能
 
 - **仓库状态一览**：当前分支、Upstream、Ahead/Behind、暂存/未暂存/未追踪/冲突文件、进行中的 merge/rebase/cherry-pick 状态。

@@ -4,6 +4,14 @@ Visual Git management panel for **Google Antigravity** (the App, v2.34.0+) — b
 
 [中文 README](README.zh-CN.md)
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/changes.png" width="31%" alt="Changes — commit composer" />
+  <img src="docs/screenshots/branches.png" width="31%" alt="Branches — local and remote list" />
+  <img src="docs/screenshots/history.png" width="31%" alt="History — interactive commit graph" />
+</p>
+
 ## Features
 
 - **Repository status at a glance**: current branch, upstream, ahead/behind, staged/unstaged/untracked/conflicted files, in-progress merge/rebase/cherry-pick state.
