@@ -43,6 +43,22 @@ export async function repoInfoFor(root: string, source: RepoInfo['source']): Pro
   };
 }
 
+/**
+ * Split the first `count` space-separated fields off a porcelain v2 line.
+ * The remainder is returned verbatim (paths may contain spaces).
+ */
+function splitStatusFields(line: string, count: number): { fields: string[]; rest: string } {
+  const fields: string[] = [];
+  let pos = 0;
+  for (let i = 0; i < count; i++) {
+    const space = line.indexOf(' ', pos);
+    if (space === -1) return { fields, rest: '' };
+    fields.push(line.slice(pos, space));
+    pos = space + 1;
+  }
+  return { fields, rest: line.slice(pos) };
+}
+
 /** Parse `git status --porcelain=v2 --branch` output. */
 export function parsePorcelainV2(out: string, repo: string): RepoStatus {
   const status: RepoStatus = {
@@ -60,15 +76,17 @@ export function parsePorcelainV2(out: string, repo: string): RepoStatus {
     conflicted: [],
   };
 
+  let detached = false;
+  let headOid: string | null = null;
+
   for (const line of out.split('\n')) {
     if (!line) continue;
     if (line.startsWith('# branch.head ')) {
       const v = line.slice('# branch.head '.length).trim();
-      if (v === '(detached)') status.detachedAt = '';
+      if (v === '(detached)') detached = true;
       else status.branch = v;
     } else if (line.startsWith('# branch.oid ')) {
-      const oid = line.slice('# branch.oid '.length).trim();
-      if (status.detachedAt === '') status.detachedAt = oid === '(initial)' ? '(no commits)' : oid.slice(0, 10);
+      headOid = line.slice('# branch.oid '.length).trim();
     } else if (line.startsWith('# branch.upstream ')) {
       status.upstream = line.slice('# branch.upstream '.length).trim();
     } else if (line.startsWith('# branch.ab ')) {
@@ -78,16 +96,19 @@ export function parsePorcelainV2(out: string, repo: string): RepoStatus {
         status.behind = Number(m[2]);
       }
     } else if (line[0] === '1' || line[0] === '2') {
-      // ordinary (1) or rename/copy (2): `1 <XY> ... <path>` / `2 <XY> ... <path>\t<orig>`
-      const parts = line.split('\t');
-      const fields = parts[0]!.split(' ');
+      // ordinary: `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`
+      // rename/copy: `2 <XY> ... <X><score> <path>\t<origPath>`
+      const isRename = line[0] === '2';
+      const tab = isRename ? line.indexOf('\t') : -1;
+      const head = tab === -1 ? line : line.slice(0, tab);
+      const origPath = tab === -1 ? undefined : line.slice(tab + 1);
+      const { fields, rest } = splitStatusFields(head, isRename ? 9 : 8);
+      if (!rest) continue;
       const xy = fields[1] ?? '..';
-      const filePath = line[0] === '2' ? parts[parts.length - 2]! : parts[parts.length - 1]!;
-      const origPath = line[0] === '2' ? parts[parts.length - 1]! : undefined;
-      const x = xy[0]!;
-      const y = xy[1]!;
+      const x = xy[0] ?? '.';
+      const y = xy[1] ?? '.';
       const change: FileChange = {
-        path: filePath,
+        path: rest,
         ...(origPath !== undefined ? { origPath } : {}),
         staged: x !== '.' && x !== '?',
         unstaged: y !== '.',
@@ -97,18 +118,16 @@ export function parsePorcelainV2(out: string, repo: string): RepoStatus {
       if (change.staged) status.staged.push(change);
       if (change.unstaged) status.unstaged.push(change);
     } else if (line[0] === 'u') {
-      // unmerged: `u <XY> ... <path>`
-      const fields = line.split('\t')[0]!.split(' ');
-      const filePath = line.split('\t').pop()!;
-      const change: FileChange = {
-        path: filePath,
+      // unmerged: `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`
+      const { rest } = splitStatusFields(line, 10);
+      if (!rest) continue;
+      status.conflicted.push({
+        path: rest,
         staged: false,
         unstaged: false,
         kind: 'U',
         conflicted: true,
-      };
-      void fields;
-      status.conflicted.push(change);
+      });
     } else if (line[0] === '?') {
       status.untracked.push({
         path: line.slice(2),
@@ -118,6 +137,11 @@ export function parsePorcelainV2(out: string, repo: string): RepoStatus {
         conflicted: false,
       });
     }
+  }
+
+  if (detached) {
+    status.detachedAt =
+      headOid === null ? '' : headOid === '(initial)' ? '(no commits)' : headOid.slice(0, 10);
   }
 
   status.clean =

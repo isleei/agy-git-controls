@@ -52,3 +52,100 @@ export interface ApiError {
   error: string;
   code?: string;
 }
+
+export interface BranchInfo {
+  /** Short name: `main` for locals, `origin/main` for remotes. */
+  name: string;
+  /** Full refname. */
+  ref: string;
+  remote: boolean;
+  current: boolean;
+  /** Short upstream name, e.g. `origin/main`; null when untracked. */
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  lastCommitAt: string;
+  lastCommitSha: string;
+}
+
+export type CommitRefType = 'head' | 'tag' | 'branch' | 'remote' | 'stash';
+
+export interface CommitRef {
+  name: string;
+  type: CommitRefType;
+}
+
+export interface CommitInfo {
+  sha: string;
+  shortSha: string;
+  parents: string[];
+  author: string;
+  authorEmail: string;
+  /** ISO-8601 author date. */
+  date: string;
+  subject: string;
+  body?: string;
+  refs: CommitRef[];
+}
+
+export interface LogPage {
+  commits: CommitInfo[];
+  total?: number;
+  hasMore: boolean;
+}
+
+export interface DiffResult {
+  /** Path the diff was requested for ('' for a multi-file diff). */
+  path: string;
+  /** Raw unified patch (may be truncated). */
+  hunks: string;
+  binary: boolean;
+  truncated: boolean;
+  /** Source path when the diff follows a rename. */
+  oldPath?: string;
+}
+
+export interface StashEntry {
+  index: number;
+  /** Reflog selector, e.g. `stash@{0}`. */
+  name: string;
+  message: string;
+  /** Branch the stash was created on, when parseable. */
+  branch?: string;
+  date: string;
+}
+
+export interface WorktreeInfo {
+  path: string;
+  /** Short branch name; null when detached or bare. */
+  branch: string | null;
+  head: string;
+  detached: boolean;
+  bare: boolean;
+  locked: boolean;
+  prunable: boolean;
+}
+
+export interface RemoteInfo {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
+export interface TagInfo {
+  name: string;
+  annotated: boolean;
+  date?: string;
+  message?: string;
+  sha: string;
+}
+
+/** Uniform result for every write operation. */
+export interface OperationResult {
+  ok: boolean;
+  stdout?: string;
+  stderr?: string;
+  code?: number;
+  /** Unmerged paths present after the operation failed. */
+  conflicted?: string[];
+}
