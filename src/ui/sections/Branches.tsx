@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   GitBranch,
+  GitMerge,
   Link2,
   MoreHorizontal,
   Pencil,
@@ -157,6 +158,33 @@ export function BranchesSection() {
     toast(ok ? 'success' : 'error', ok ? 'Branch name copied' : 'Clipboard unavailable');
   };
 
+  const mergeIntoCurrent = async (branch: BranchInfo): Promise<void> => {
+    if (!activeRepo) return;
+    await run(
+      `merge:${branch.name}`,
+      () => api.merge(activeRepo, { branch: branch.name }),
+      { success: `Merged ${branch.name}` },
+    );
+  };
+
+  const rebaseOnto = async (branch: BranchInfo): Promise<void> => {
+    if (!activeRepo) return;
+    await run(
+      `rebase:${branch.name}`,
+      () => api.rebase(activeRepo, { onto: branch.name }),
+      {
+        confirm: {
+          title: `Rebase current branch onto ${branch.name}?`,
+          target: state.status?.branch ?? 'current branch',
+          description: 'Commits on the current branch are replayed on top of the target.',
+          confirmLabel: 'Rebase',
+          danger: true,
+        },
+        success: `Rebased onto ${branch.name}`,
+      },
+    );
+  };
+
   const buildMenu = (branch: BranchInfo): MenuItem[] => {
     const items: MenuItem[] = [];
     if (!branch.current) {
@@ -164,6 +192,16 @@ export function BranchesSection() {
         label: 'Checkout',
         icon: <Play size={12} />,
         onSelect: () => void checkout(branch),
+      });
+      items.push({
+        label: 'Merge into current',
+        icon: <GitMerge size={12} />,
+        onSelect: () => void mergeIntoCurrent(branch),
+      });
+      items.push({
+        label: 'Rebase current onto this',
+        icon: <GitMerge size={12} />,
+        onSelect: () => void rebaseOnto(branch),
       });
     }
     if (!branch.remote) {
