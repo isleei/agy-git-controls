@@ -1,0 +1,14 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "agy-git-controls",
+  "displayName": "Git Controls",
+  "version": "0.1.0",
+  "description": "Visual Git management for Antigravity: branches, changes, diff, commit, sync, graph, stash and worktrees in a native side panel — no AI tokens spent on routine Git operations.",
+  "logo": "assets/logo.svg",
+  "license": "MIT",
+  "keywords": ["git", "source-control", "panel", "sidecar"],
+  "suggestedPrompts": [
+    "Open the Git Controls panel and show my repo status",
+    "Summarize the uncommitted changes in this project"
+  ]
+}
