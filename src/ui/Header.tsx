@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -42,7 +42,6 @@ export function Header() {
   const [newBranchOpen, setNewBranchOpen] = useState(false);
   const [newBranchName, setNewBranchName] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const headerRef = useRef<HTMLElement>(null);
 
   const status = state.status;
   const activeInfo = state.repos.find((repo) => repo.path === activeRepo) ?? null;
@@ -79,15 +78,16 @@ export function Header() {
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent): void => {
-      if (!headerRef.current?.contains(event.target as Node)) {
-        setRepoOpen(false);
-        setBranchOpen(false);
-        setMoreOpen(false);
-        setAddOpen(false);
-      }
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.menu') || target?.closest('[aria-haspopup="menu"]')) return;
+      closeMenus();
     };
     document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
+    window.addEventListener('blur', closeMenus);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('blur', closeMenus);
+    };
   }, []);
 
   const closeMenus = (): void => {
@@ -199,7 +199,7 @@ export function Header() {
     : '—';
 
   return (
-    <header className="header" ref={headerRef}>
+    <header className="header">
       <div className="header-row">
         <div className="dropdown">
           <button
